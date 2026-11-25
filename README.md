@@ -121,9 +121,3 @@ Total: 46 tests | 100% PASSED
 | Testing | pytest, Hypothesis, unittest.mock |
 | Infrastructure | Azure DevOps, Terraform (config), YAML |
 | Language | Python 3.11+ |
-
-## Author
-
-Mourya Padmanabhuni — Lead Data Engineer
-GitHub: https://github.com/mouryapt
-LinkedIn: https://www.linkedin.com/in/mourya-padmanabhuni/
