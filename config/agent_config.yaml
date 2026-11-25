@@ -1,0 +1,87 @@
+# Databricks Agentic AI Pipeline — Configuration
+# Agent and pipeline settings for the La Fosse Lead Data Engineer POC
+
+azure_databricks:
+  workspace_url: "${DATABRICKS_HOST}"          # e.g. https://adb-xxx.azuredatabricks.net
+  cluster_id: "${DATABRICKS_CLUSTER_ID}"
+  unity_catalog:
+    catalog: "financial_platform"
+    schema: "transactions"
+  delta_lake:
+    bronze_path: "abfss://bronze@datalake.dfs.core.windows.net/transactions/"
+    silver_path: "abfss://silver@datalake.dfs.core.windows.net/transactions/"
+    gold_path: "abfss://gold@datalake.dfs.core.windows.net/metrics/"
+    checkpoint_base: "abfss://checkpoints@datalake.dfs.core.windows.net/"
+
+azure_openai:
+  endpoint: "${AZURE_OPENAI_ENDPOINT}"
+  api_key: "${AZURE_OPENAI_API_KEY}"
+  deployment_name: "gpt-4o"
+  api_version: "2024-02-01"
+  max_tokens: 1024
+  temperature: 0.0    # Deterministic for data quality decisions
+
+agents:
+  data_quality_agent:
+    enabled: true
+    null_rate_warning_threshold: 0.05    # 5% nulls = warning
+    null_rate_critical_threshold: 0.20   # 20% nulls = critical
+    escalation_threshold: 2              # escalate if >=2 critical failures
+    enable_autonomous_remediation: true
+    llm_classification: true             # use Azure OpenAI for anomaly classification
+    audit_table: "financial_platform.transactions.dq_audit_log"
+
+  schema_evolution_agent:
+    enabled: true
+    auto_apply_safe_changes: true        # additive columns, type widening
+    block_breaking_changes: true         # drops, type narrowing
+    notify_on_breaking_change: true
+    ddl_execution_mode: "databricks_rest_api"
+    schema_registry_table: "financial_platform.transactions.schema_registry"
+
+  pipeline_orchestrator_agent:
+    enabled: true
+    max_iterations: 10
+    supervisor_model: "gpt-4o"
+    routing_strategy: "quality_first"    # quality → schema → features
+    state_persistence: "databricks_delta"
+    state_table: "financial_platform.transactions.pipeline_state"
+
+pipeline:
+  bronze_ingestion:
+    format: "cloudFiles"                 # Auto Loader
+    source_format: "json"
+    schema_hints: "transaction_id STRING, amount DOUBLE, account_id STRING, currency STRING"
+    max_files_per_trigger: 1000
+    rescuedDataColumn: "_rescued_data"
+
+  silver_transformation:
+    merge_keys: ["transaction_id"]
+    dedup_window_hours: 24
+    required_fields: ["transaction_id", "amount", "account_id", "currency"]
+    valid_currencies: ["GBP", "USD", "EUR", "CHF", "JPY"]
+    min_amount: 0.01
+    zorder_columns: ["account_id", "event_timestamp"]
+
+  gold_aggregation:
+    aggregation_windows: ["1d", "7d", "30d"]
+    partition_by: ["feature_date"]
+    zorder_columns: ["account_id"]
+    optimize_after_write: true
+
+  feature_engineering:
+    high_velocity_threshold: 20         # txns/day flagging threshold
+    amount_spike_multiplier: 3.0        # rolling avg multiplier for spike detection
+    mlflow_experiment: "/Shared/financial_platform/feature_engineering"
+    feature_store_table: "financial_platform.features.account_daily_features"
+
+tdd:
+  coverage_threshold: 0.80              # 80% minimum for CI gate
+  test_command: "pytest tests/ -v --tb=short --cov=. --cov-report=term-missing"
+  ci_gate_enabled: true
+  property_test_examples: 50            # Hypothesis test examples per property
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s [%(levelname)s] %(name)s — %(message)s"
+  databricks_cluster_log_path: "dbfs:/cluster-logs/"
